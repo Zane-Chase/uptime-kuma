@@ -1,0 +1,1 @@
+ALTER TABLE `monitor` ADD COLUMN `check_content_parameter` BOOLEAN DEFAULT 0; 
