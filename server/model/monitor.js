@@ -148,6 +148,8 @@ class Monitor extends BeanModel {
             kafkaProducerAllowAutoTopicCreation: this.getKafkaProducerAllowAutoTopicCreation(),
             kafkaProducerMessage: this.kafkaProducerMessage,
             check_content_parameter: this.getCheckContentParameter(),
+            pre_up_command: this.pre_up_command,
+            pre_down_command: this.pre_down_command,
             screenshot,
         };
 
@@ -1577,6 +1579,10 @@ class Monitor extends BeanModel {
      */
     static async sendNotification(isFirstBeat, monitor, bean) {
         if (!isFirstBeat || bean.status === DOWN) {
+            // Execute pre-notification command ONCE before sending any notifications
+            const { executePreCommand } = require("../pre-command");
+            await executePreCommand(bean.status, await monitor.toJSON(false));
+
             const notificationList = await Monitor.getNotificationList(monitor);
 
             let text;

@@ -557,6 +557,47 @@
                                 {{ $t("Setup Notification") }}
                             </button>
 
+                            <!-- Pre-Commands Section -->
+                            <div class="mt-3 mb-3">
+                                <label for="pre-up-command" class="form-label">
+                                    {{ $t("preUpCommand") }}
+                                    <span 
+                                        :class="['badge', 'ms-1', monitor.pre_up_command && monitor.pre_up_command.trim() ? 'bg-success' : 'bg-secondary']"
+                                        :title="monitor.pre_up_command && monitor.pre_up_command.trim() ? $t('commandWillExecute') : $t('commandNotExecute')"
+                                    >UP</span>
+                                </label>
+                                <textarea
+                                    id="pre-up-command"
+                                    v-model="monitor.pre_up_command"
+                                    class="form-control"
+                                    rows="2"
+                                    :placeholder="upCommandPlaceholder"
+                                ></textarea>
+                                <div class="form-text">
+                                    {{ $t("preUpCommandDesc") }}
+                                </div>
+                            </div>
+
+                            <div class="mb-3">
+                                <label for="pre-down-command" class="form-label">
+                                    {{ $t("preDownCommand") }}
+                                    <span 
+                                        :class="['badge', 'ms-1', monitor.pre_down_command && monitor.pre_down_command.trim() ? 'bg-danger' : 'bg-secondary']"
+                                        :title="monitor.pre_down_command && monitor.pre_down_command.trim() ? $t('commandWillExecute') : $t('commandNotExecute')"
+                                    >DOWN</span>
+                                </label>
+                                <textarea
+                                    id="pre-down-command"
+                                    v-model="monitor.pre_down_command"
+                                    class="form-control"
+                                    rows="2"
+                                    :placeholder="downCommandPlaceholder"
+                                ></textarea>
+                                <div class="form-text">
+                                    {{ $t("preDownCommandDesc") }}
+                                </div>
+                            </div>
+
                             <!-- Proxies -->
                             <div v-if="monitor.type === 'http' || monitor.type === 'keyword' || monitor.type === 'json-query'">
                                 <h2 class="mt-5 mb-2">{{ $t("Proxy") }}</h2>
@@ -902,6 +943,8 @@ const monitorDefaults = {
     kafkaProducerAllowAutoTopicCreation: false,
     gamedigGivenPortOnly: true,
     check_content_parameter: false,
+    pre_up_command: "",
+    pre_down_command: "",
 };
 
 export default {
@@ -952,6 +995,20 @@ export default {
                 return this.ipRegexPattern;
             }
             return null;
+        },
+
+        upCommandPlaceholder() {
+            return `curl -L -X PUT 'http://your-api-server/api/channel/?status_only=true' \\
+-H 'Content-Type: application/json' \\
+-H 'Authorization: your-auth-token' \\
+-d '{"id": 5, "status": 1}'`;
+        },
+
+        downCommandPlaceholder() {
+            return `curl -L -X PUT 'http://your-api-server/api/channel/?status_only=true' \\
+-H 'Content-Type: application/json' \\
+-H 'Authorization: your-auth-token' \\
+-d '{"id": 5, "status": 2}'`;
         },
 
         pageName() {

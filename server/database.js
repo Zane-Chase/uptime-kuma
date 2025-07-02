@@ -86,6 +86,7 @@ class Database {
         "patch-timeout.sql": true,
         "patch-monitor-tls-info-add-fk.sql": true,
         "patch-add-check-content-parameter.sql": true,
+        "patch-add-monitor-pre-commands.sql": true,
     };
 
     /**

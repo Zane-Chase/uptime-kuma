@@ -796,6 +796,8 @@ let needSetup = false;
                     monitor.kafkaProducerAllowAutoTopicCreation;
                 bean.gamedigGivenPortOnly = monitor.gamedigGivenPortOnly;
                 bean.check_content_parameter = monitor.check_content_parameter;
+                bean.pre_up_command = monitor.pre_up_command;
+                bean.pre_down_command = monitor.pre_down_command;
 
                 bean.validate();
 
