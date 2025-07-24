@@ -13,6 +13,65 @@ let router = express.Router();
 let cache = apicache.middleware;
 const server = UptimeKumaServer.getInstance();
 
+// Status page monitors API - returns all monitors with name, status, and uptime
+router.get("/status/:slug/monitors", cache("1 minutes"), async (request, response) => {
+    allowDevAllOrigin(response);
+
+    try {
+        let slug = request.params.slug;
+        let statusPageID = await StatusPage.slugToID(slug);
+
+        if (!statusPageID) {
+            sendHttpError(response, "Status page not found");
+            return;
+        }
+
+        // Get monitor ID list (reuse existing query logic)
+        let monitorIDList = await R.getCol(`
+            SELECT monitor_group.monitor_id FROM monitor_group, \`group\`
+            WHERE monitor_group.group_id = \`group\`.id
+            AND public = 1
+            AND \`group\`.status_page_id = ?
+        `, [
+            statusPageID
+        ]);
+
+        let monitors = [];
+
+        for (let monitorID of monitorIDList) {
+            // Get monitor name and latest heartbeat status
+            let monitorData = await R.getRow(`
+                SELECT m.name, h.status
+                FROM monitor m
+                LEFT JOIN heartbeat h ON m.id = h.monitor_id
+                WHERE m.id = ?
+                ORDER BY h.time DESC
+                LIMIT 1
+            `, [
+                monitorID
+            ]);
+
+            if (monitorData) {
+                // Calculate 24-hour uptime
+                const uptime = await Monitor.calcUptime(24, monitorID);
+                
+                monitors.push({
+                    name: monitorData.name,
+                    status: monitorData.status || 0, // Default to DOWN if no heartbeat
+                    uptime: uptime
+                });
+            }
+        }
+
+        response.json({
+            monitors: monitors
+        });
+
+    } catch (error) {
+        sendHttpError(response, error.message);
+    }
+});
+
 router.get("/status/:slug", cache("5 minutes"), async (request, response) => {
     let slug = request.params.slug;
     await StatusPage.handleStatusPageResponse(response, server.indexHTML, slug);
@@ -236,5 +295,6 @@ router.get("/api/status-page/:slug/badge", cache("5 minutes"), async (request, r
         sendHttpError(response, error.message);
     }
 });
+
 
 module.exports = router;
