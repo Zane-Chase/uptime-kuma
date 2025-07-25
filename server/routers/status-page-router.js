@@ -41,7 +41,7 @@ router.get("/status/:slug/monitors", cache("1 minutes"), async (request, respons
         for (let monitorID of monitorIDList) {
             // Get monitor name and latest heartbeat status
             let monitorData = await R.getRow(`
-                SELECT m.name, h.status
+                SELECT m.name, h.status, h.ping
                 FROM monitor m
                 LEFT JOIN heartbeat h ON m.id = h.monitor_id
                 WHERE m.id = ?
@@ -58,7 +58,8 @@ router.get("/status/:slug/monitors", cache("1 minutes"), async (request, respons
                 monitors.push({
                     name: monitorData.name,
                     status: monitorData.status || 0, // Default to DOWN if no heartbeat
-                    uptime: uptime
+                    uptime: uptime,
+                    responseTime: monitorData.ping || null // Add current response time
                 });
             }
         }
