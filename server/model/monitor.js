@@ -129,6 +129,10 @@ class Monitor extends BeanModel {
             mqttTopic: this.mqttTopic,
             mqttSuccessMessage: this.mqttSuccessMessage,
             databaseQuery: this.databaseQuery,
+            databaseConnectionString: this.databaseConnectionString,
+            databaseMaxRows: this.databaseMaxRows,
+            consecutive_ups: this.consecutiveUps,
+            consecutive_downs: this.consecutiveDowns,
             authMethod: this.authMethod,
             grpcUrl: this.grpcUrl,
             grpcProtobuf: this.grpcProtobuf,
@@ -169,6 +173,7 @@ class Monitor extends BeanModel {
                 oauth_auth_method: this.oauth_auth_method,
                 pushToken: this.pushToken,
                 databaseConnectionString: this.databaseConnectionString,
+                database_password: this.database_password,
                 radiusUsername: this.radiusUsername,
                 radiusPassword: this.radiusPassword,
                 radiusSecret: this.radiusSecret,
@@ -351,6 +356,7 @@ class Monitor extends BeanModel {
             bean.time = R.isoDateTimeMillis(dayjs.utc());
             bean.status = DOWN;
             bean.downCount = previousBeat?.downCount || 0;
+            bean.upCount = previousBeat?.upCount || 0;
 
             if (this.isUpsideDown()) {
                 bean.status = flipStatus(bean.status);
@@ -407,6 +413,17 @@ class Monitor extends BeanModel {
                     }
 
                 } else if (this.type === "http" || this.type === "keyword" || this.type === "json-query") {
+
+                    // Perform database check first if configured
+                    const dbCheckResult = await this.checkDatabaseConstraints();
+                    if (!dbCheckResult.success) {
+                        log.debug("monitor", `[${this.name}] Skipping HTTP request due to database check failure`);
+                        throw new Error(dbCheckResult.message);
+                    } else if (dbCheckResult.rowCount > 0 || this.databaseConnectionString) {
+                        // Log successful database check if there was a connection string configured
+                        log.debug("monitor", `[${this.name}] Database check passed: ${dbCheckResult.message}`);
+                    }
+
                     // Do not do any queries/high loading things before the "bean.ping"
                     let startTime = dayjs().valueOf();
 
@@ -1133,42 +1150,67 @@ class Monitor extends BeanModel {
 
             log.debug("monitor", `[${this.name}] Check isImportant`);
             let isImportant = Monitor.isImportantBeat(isFirstBeat, previousBeat?.status, bean.status);
+            bean.important = isImportant;
 
-            // Mark as important if status changed, ignore pending pings,
-            // Don't notify if disrupted changes to up
+            // Update counters
             if (isImportant) {
-                bean.important = true;
-
-                if (Monitor.isImportantForNotification(isFirstBeat, previousBeat?.status, bean.status)) {
-                    log.debug("monitor", `[${this.name}] sendNotification`);
-                    await Monitor.sendNotification(isFirstBeat, this, bean);
+                if (bean.status === UP) {
+                    bean.upCount = 1;
+                    bean.downCount = 0;
+                } else if (bean.status === DOWN) {
+                    bean.downCount = 1;
+                    bean.upCount = 0;
                 } else {
-                    log.debug("monitor", `[${this.name}] will not sendNotification because it is (or was) under maintenance`);
+                    bean.upCount = 0;
+                    bean.downCount = 0;
                 }
-
-                // Reset down count
-                bean.downCount = 0;
-
-                // Clear Status Page Cache
-                log.debug("monitor", `[${this.name}] apicache clear`);
-                apicache.clear();
-
-                UptimeKumaServer.getInstance().sendMaintenanceListByUserID(this.user_id);
-
             } else {
-                bean.important = false;
+                if (bean.status === UP) {
+                    bean.upCount++;
+                } else if (bean.status === DOWN) {
+                    bean.downCount++;
+                }
+            }
 
-                if (bean.status === DOWN && this.resendInterval > 0) {
-                    ++bean.downCount;
-                    if (bean.downCount >= this.resendInterval) {
-                        // Send notification again, because we are still DOWN
-                        log.debug("monitor", `[${this.name}] sendNotification again: Down Count: ${bean.downCount} | Resend Interval: ${this.resendInterval}`);
+            // Check for notification conditions
+            const upNotificationConditionMet = bean.status === UP && this.consecutiveUps > 0 && bean.upCount === this.consecutiveUps;
+            const downNotificationConditionMet = bean.status === DOWN && this.consecutiveDowns > 0 && bean.downCount === this.consecutiveDowns;
+
+            let shouldSendNotification = false;
+            if (upNotificationConditionMet || downNotificationConditionMet) {
+                // If the status has changed, check if it's a "notifiable" change.
+                // If the status is stable, the condition being met is enough reason to notify.
+                if (isImportant) {
+                    if (Monitor.isImportantForNotification(isFirstBeat, previousBeat?.status, bean.status)) {
+                        shouldSendNotification = true;
+                    }
+                } else {
+                    // Status is stable, and we've just hit the consecutive threshold.
+                    shouldSendNotification = true;
+                }
+            }
+
+            if (shouldSendNotification) {
+                log.debug("monitor", `[${this.name}] sendNotification`);
+                await Monitor.sendNotification(isFirstBeat, this, bean);
+            }
+
+            // Handle resending notifications for monitors that are still down
+            if (!isImportant && bean.status === DOWN && this.resendInterval > 0) {
+                if (this.consecutiveDowns > 0 && bean.downCount > this.consecutiveDowns) {
+                    let downCountSinceNotification = bean.downCount - this.consecutiveDowns;
+                    if (downCountSinceNotification > 0 && downCountSinceNotification % this.resendInterval === 0) {
+                        log.debug("monitor", `[${this.name}] sendNotification again: Down Streak: ${bean.downCount} | Resend Interval: ${this.resendInterval}`);
                         await Monitor.sendNotification(isFirstBeat, this, bean);
-
-                        // Reset down count
-                        bean.downCount = 0;
                     }
                 }
+            }
+
+            // Clear Status Page Cache if important
+            if (isImportant) {
+                log.debug("monitor", `[${this.name}] apicache clear`);
+                apicache.clear();
+                UptimeKumaServer.getInstance().sendMaintenanceListByUserID(this.user_id);
             }
 
             if (bean.status === UP) {
@@ -1578,30 +1620,29 @@ class Monitor extends BeanModel {
      * @param {Bean} bean Status information about monitor
      */
     static async sendNotification(isFirstBeat, monitor, bean) {
-        if (!isFirstBeat || bean.status === DOWN) {
-            // Execute pre-notification command ONCE before sending any notifications
-            const { executePreCommand } = require("../pre-command");
-            await executePreCommand(bean.status, await monitor.toJSON(false));
+        // Execute pre-notification command ONCE before sending any notifications
+        const { executePreCommand } = require("../pre-command");
+        await executePreCommand(bean.status, await monitor.toJSON(false));
 
-            const notificationList = await Monitor.getNotificationList(monitor);
+        const notificationList = await Monitor.getNotificationList(monitor);
 
-            let text;
-            if (bean.status === UP) {
-                text = "✅ Up";
-            } else {
-                text = "🔴 Down";
-            }
+        let text;
+        if (bean.status === UP) {
+            text = "✅ Up";
+        } else {
+            text = "🔴 Down";
+        }
 
-            let msg = `[${monitor.name}] [${text}] ${bean.msg}`;
+        let msg = `[${monitor.name}] [${text}] ${bean.msg}`;
 
-            for (let notification of notificationList) {
-                try {
-                    const heartbeatJSON = bean.toJSON();
+        for (let notification of notificationList) {
+            try {
+                const heartbeatJSON = bean.toJSON();
 
-                    // Prevent if the msg is undefined, notifications such as Discord cannot send out.
-                    if (!heartbeatJSON["msg"]) {
-                        heartbeatJSON["msg"] = "N/A";
-                    }
+                // Prevent if the msg is undefined, notifications such as Discord cannot send out.
+                if (!heartbeatJSON["msg"]) {
+                    heartbeatJSON["msg"] = "N/A";
+                }
 
                     // Also provide the time in server timezone
                     heartbeatJSON["timezone"] = await UptimeKumaServer.getInstance().getTimezone();
@@ -1615,7 +1656,6 @@ class Monitor extends BeanModel {
                 }
             }
         }
-    }
 
     /**
      * Get list of notification providers for a given monitor
@@ -1888,6 +1928,74 @@ class Monitor extends BeanModel {
      */
     getCheckContentParameter() {
         return !!this.check_content_parameter;
+    }
+
+    /**
+     * Check database constraints for MySQL queries
+     * @returns {Promise<{success: boolean, rowCount: number, message: string}>}
+     */
+    async checkDatabaseConstraints() {
+        // If no database connection string is configured, skip the check
+        if (!this.databaseConnectionString) {
+            log.debug("monitor", `[${this.name}] Database check skipped: No database connection string configured`);
+            return { success: true, rowCount: 0, message: "No database connection configured" };
+        }
+
+        // If no query is configured, skip the check
+        if (!this.databaseQuery) {
+            log.debug("monitor", `[${this.name}] Database check skipped: No query configured`);
+            return { success: true, rowCount: 0, message: "No database query configured" };
+        }
+
+        log.debug("monitor", `[${this.name}] Database check started`);
+        log.debug("monitor", `[${this.name}] Connection: ${this.databaseConnectionString.replace(/password=[^;]*/gi, 'password=***')}`);
+        log.debug("monitor", `[${this.name}] Query: ${this.databaseQuery}`);
+        log.debug("monitor", `[${this.name}] Max rows limit: ${this.databaseMaxRows || 10}`);
+
+        try {
+            // Execute MySQL query
+            const result = await mysqlQuery(this.databaseConnectionString, this.databaseQuery, this.database_password);
+            
+            // Parse row count from mysqlQuery result string format "Rows: X"
+            let rowCount = 0;
+            if (result && typeof result === 'string') {
+                const match = result.match(/Rows:\s*(\d+)/);
+                rowCount = match ? parseInt(match[1], 10) : 0;
+            }
+            
+            const maxRows = this.databaseMaxRows || 10;
+
+            log.debug("monitor", `[${this.name}] Query executed successfully`);
+            log.debug("monitor", `[${this.name}] Query returned ${rowCount} rows, limit: ${maxRows}`);
+
+            // Check if row count exceeds the maximum allowed
+            if (rowCount > maxRows) {
+                // Get first and last row for data preview (safely handle result string)
+                let dataPreview = "";
+                if (result && typeof result === 'string') {
+                    const lines = result.split('\n').filter(line => line.trim() && !line.startsWith('Rows:'));
+                    if (lines.length > 0) {
+                        const firstRow = lines[0].substring(0, 100) + (lines[0].length > 100 ? '...' : '');
+                        const lastRow = lines.length > 1 ? lines[lines.length - 1].substring(0, 100) + (lines[lines.length - 1].length > 100 ? '...' : '') : '';
+                        dataPreview = `First row: ${firstRow}${lastRow ? ` | Last row: ${lastRow}` : ''}`;
+                    }
+                }
+                
+                const detailedMessage = `Database query returned ${rowCount} rows, exceeding limit of ${maxRows} rows. ${dataPreview}`;
+                log.warn("monitor", `[${this.name}] ${detailedMessage}`);
+                return { success: false, rowCount: rowCount, message: detailedMessage };
+            }
+
+            log.debug("monitor", `[${this.name}] Database check passed: ${rowCount} rows within limit`);
+            return { success: true, rowCount: rowCount, message: `Query returned ${rowCount} rows (within limit of ${maxRows})` };
+
+        } catch (error) {
+            const errorMessage = `Database check failed: ${error.message}`;
+            log.error("monitor", `[${this.name}] ${errorMessage}`);
+            
+            // Treat database errors as 0 rows, but still fail the check
+            return { success: false, rowCount: 0, message: errorMessage };
+        }
     }
 }
 

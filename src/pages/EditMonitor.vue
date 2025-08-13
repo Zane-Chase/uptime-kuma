@@ -531,6 +531,29 @@
                             <div class="my-3">
                                 <tags-manager ref="tagsManager" :pre-selected-tags="monitor.tags"></tags-manager>
                             </div>
+
+                            <!-- Database Check -->
+                            <div v-if="monitor.type === 'http' || monitor.type === 'keyword' || monitor.type === 'json-query'">
+                                <h2 class="mt-5 mb-2">数据库检查 (仅限 MySQL)</h2>
+                                <div class="my-3">
+                                    <label for="dbConnectionString" class="form-label">连接字符串</label>
+                                    <input id="dbConnectionString" v-model="monitor.databaseConnectionString" type="text" class="form-control">
+                                        <div class="form-text">
+                                        例如: mysql://user:password@host:port/database
+                                    </div>
+                                </div>
+                                <div class="my-3">
+                                    <label for="dbQuery" class="form-label">查询语句</label>
+                                    <textarea id="dbQuery" v-model="monitor.databaseQuery" class="form-control" placeholder="例如: SELECT 1"></textarea>
+                                </div>
+                                <div class="my-3">
+                                    <label for="dbMaxRows" class="form-label">最大行数</label>
+                                    <input id="dbMaxRows" v-model="monitor.databaseMaxRows" type="number" class="form-control" min="0" step="1">
+                                    <div class="form-text">
+                                        如果查询返回的行数超过此值，监控将被视为“宕机”。
+                                    </div>
+                                </div>
+                            </div>
                         </div>
 
                         <div class="col-md-6">
@@ -556,6 +579,22 @@
                             <button class="btn btn-primary me-2" type="button" @click="$refs.notificationDialog.show()">
                                 {{ $t("Setup Notification") }}
                             </button>
+
+                            <div class="my-3">
+                                <label for="consecutiveUps" class="form-label">连续 UP 次数</label>
+                                <input id="consecutiveUps" v-model="monitor.consecutive_ups" type="number" class="form-control" min="1" step="1">
+                                <div class="form-text">
+                                    当监控连续 UP 状态达到此数值时，发送“正常”通知。
+                                </div>
+                            </div>
+
+                            <div class="my-3">
+                                <label for="consecutiveDowns" class="form-label">连续 DOWN 次数</label>
+                                <input id="consecutiveDowns" v-model="monitor.consecutive_downs" type="number" class="form-control" min="1" step="1">
+                                <div class="form-text">
+                                    当监控连续 DOWN 状态达到此数值时，发送“宕机”通知。
+                                </div>
+                            </div>
 
                             <!-- Pre-Commands Section -->
                             <div class="mt-3 mb-3">
@@ -917,6 +956,11 @@ const monitorDefaults = {
     maxretries: 0,
     timeout: 48,
     notificationIDList: {},
+    databaseConnectionString: "",
+    databaseQuery: "",
+    databaseMaxRows: 10,
+    consecutive_ups: 1,
+    consecutive_downs: 1,
     ignoreTls: false,
     upsideDown: false,
     packetSize: 56,
@@ -1361,6 +1405,15 @@ message HealthCheckResponse {
                         }
 
                         this.monitor = res.monitor;
+
+                        // Compatibility for old monitors created before the feature was added
+                        if (!this.monitor.consecutive_ups) {
+                            this.monitor.consecutive_ups = 1;
+                        }
+
+                        if (!this.monitor.consecutive_downs) {
+                            this.monitor.consecutive_downs = 1;
+                        }
 
                         if (this.isClone) {
                             /*

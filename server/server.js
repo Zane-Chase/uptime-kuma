@@ -768,6 +768,7 @@ let needSetup = false;
                 bean.mqttSuccessMessage = monitor.mqttSuccessMessage;
                 bean.databaseConnectionString = monitor.databaseConnectionString;
                 bean.databaseQuery = monitor.databaseQuery;
+                bean.databaseMaxRows = monitor.databaseMaxRows;
                 bean.authMethod = monitor.authMethod;
                 bean.authWorkstation = monitor.authWorkstation;
                 bean.authDomain = monitor.authDomain;
@@ -798,6 +799,8 @@ let needSetup = false;
                 bean.check_content_parameter = monitor.check_content_parameter;
                 bean.pre_up_command = monitor.pre_up_command;
                 bean.pre_down_command = monitor.pre_down_command;
+                bean.consecutiveUps = monitor.consecutive_ups;
+                bean.consecutiveDowns = monitor.consecutive_downs;
 
                 bean.validate();
 
